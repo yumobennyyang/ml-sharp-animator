@@ -1,7 +1,10 @@
 import { SplatMesh } from "@sparkjsdev/spark";
 import { PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { computeMaxOffset } from "../trajectory/CameraMatrixUtils";
+import {
+	computeDepthQuantiles,
+	computeMaxOffset,
+} from "../trajectory/CameraMatrixUtils";
 import { TrajectoryPlayer } from "../trajectory/TrajectoryPlayer";
 import { createEyeTrajectory } from "../trajectory/trajectories";
 import {
@@ -11,6 +14,7 @@ import {
 } from "../trajectory/types";
 import {
 	estimateFocalLength,
+	extractPlyPositions,
 	type PlyMetadata,
 	parsePlyMetadata,
 } from "../utils/plyMetadata";
@@ -35,6 +39,7 @@ export class GaussianViewer {
 	private trajectoryPlayer: TrajectoryPlayer;
 	private trajectoryParams: TrajectoryParams;
 	private metadata: PlyMetadata | null = null;
+	private positions: Float32Array | null = null; // Vertex positions for depth quantile computation
 	private isDisposed = false;
 	private animationFrameId: number | null = null;
 
@@ -184,6 +189,14 @@ export class GaussianViewer {
 			this.metadata = parsePlyMetadata(buffer);
 			console.log("[GaussianViewer] Metadata parsed:", this.metadata);
 
+			// Extract vertex positions for depth quantile computation (matching Python)
+			this.positions = extractPlyPositions(buffer);
+			console.log(
+				"[GaussianViewer] Positions extracted:",
+				this.positions.length / 3,
+				"vertices",
+			);
+
 			// Create blob URL for Spark
 			const blob = new Blob([buffer], { type: "application/octet-stream" });
 			const url = URL.createObjectURL(blob);
@@ -231,20 +244,31 @@ export class GaussianViewer {
 	private setupCameraForScene(): void {
 		if (!this.splatMesh) return;
 
-		// Get bounding box using Spark's method
-		const box = this.splatMesh.getBoundingBox(true);
+		// Compute depth quantiles from actual positions (matching Python's _compute_depth_quantiles)
+		// Python uses: q_near=0.001 (0.1 percentile), q_focus=0.1 (10th percentile), q_far=0.999
+		if (this.positions && this.positions.length > 0) {
+			const depthQuantiles = computeDepthQuantiles(this.positions);
+			this.minDepth = Math.max(0.1, depthQuantiles.min);
+			// Python uses min_depth_focus=2.0 as floor for focus depth
+			this.depthFocus = Math.max(2.0, depthQuantiles.focus);
 
-		console.log("[GaussianViewer] Bounding box min:", box.min);
-		console.log("[GaussianViewer] Bounding box max:", box.max);
-
-		// Compute depth quantiles (matching Python's _compute_depth_quantiles)
-		// In Python: depth_quantiles.focus = 10th percentile of scene Z values
-		// Approximate from bounding box: focus ≈ min + 0.1 * (max - min)
-		const minZ = box.min.z;
-		const maxZ = box.max.z;
-		this.minDepth = Math.max(0.1, minZ);
-		// Python uses min_depth_focus=2.0 as floor
-		this.depthFocus = Math.max(2.0, minZ + 0.1 * (maxZ - minZ));
+			console.log(
+				"[GaussianViewer] Depth quantiles from positions:",
+				depthQuantiles,
+			);
+		} else {
+			// Fallback to bounding box if positions not available
+			const box = this.splatMesh.getBoundingBox(true);
+			console.log(
+				"[GaussianViewer] Fallback to bounding box:",
+				box.min,
+				box.max,
+			);
+			const minZ = box.min.z;
+			const maxZ = box.max.z;
+			this.minDepth = Math.max(0.1, minZ);
+			this.depthFocus = Math.max(2.0, minZ + 0.1 * (maxZ - minZ));
+		}
 
 		console.log("[GaussianViewer] Min depth:", this.minDepth);
 		console.log("[GaussianViewer] Depth focus:", this.depthFocus);
