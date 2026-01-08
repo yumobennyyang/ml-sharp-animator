@@ -62,19 +62,13 @@ export function opencvToThreejs(position: Vector3): Vector3 {
 
 /**
  * Compute depth statistics from Gaussian positions.
- * Matches Python's _compute_depth_quantiles in camera.py
  *
- * @param positions - Array of 3D positions from the splat [x0, y0, z0, x1, y1, z1, ...]
- * @param qNear - Quantile for near/min depth (default 0.001 = 0.1 percentile, matching Python)
- * @param qFocus - Quantile for focus depth (default 0.1 = 10th percentile, matching Python)
- * @param qFar - Quantile for far/max depth (default 0.999 = 99.9 percentile, matching Python)
- * @returns min, focus, and max depth values
+ * @param positions - Array of 3D positions from the splat
+ * @returns min, median, and max depth values
  */
 export function computeDepthQuantiles(
 	positions: Float32Array,
-	qNear = 0.001,
-	qFocus = 0.1,
-	qFar = 0.999,
+	quantile = 0.1,
 ): { min: number; focus: number; max: number } {
 	const depths: number[] = [];
 
@@ -92,9 +86,9 @@ export function computeDepthQuantiles(
 
 	depths.sort((a, b) => a - b);
 
-	const minIndex = Math.floor(depths.length * qNear);
-	const focusIndex = Math.floor(depths.length * qFocus);
-	const maxIndex = Math.floor(depths.length * qFar);
+	const minIndex = Math.floor(depths.length * quantile);
+	const maxIndex = Math.floor(depths.length * (1 - quantile));
+	const focusIndex = Math.floor(depths.length * 0.5);
 
 	return {
 		min: depths[minIndex] ?? depths[0] ?? 1,

@@ -170,3 +170,7 @@ urllib3==2.6.0
     # via requests
 wadler-lindig==0.1.7
     # via jaxtyping
+websockets==15.0.1
+    # via uvicorn
+uvicorn[standard]
+    # for websocket support

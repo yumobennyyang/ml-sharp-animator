@@ -26,8 +26,15 @@ const resetButtonElement = document.getElementById(
 	"reset-btn",
 ) as HTMLButtonElement;
 const loadingElement = document.getElementById("loading");
+const loadingTextElement = document.getElementById("loading-text");
 const loadSampleButtonElement = document.getElementById(
 	"load-sample-btn",
+) as HTMLButtonElement;
+const loadSampleVideoButtonElement = document.getElementById(
+	"load-sample-video-btn",
+) as HTMLButtonElement;
+const downloadPlyButtonElement = document.getElementById(
+	"download-ply-btn",
 ) as HTMLButtonElement;
 
 // Advanced settings elements
@@ -81,14 +88,39 @@ const viewer = new GaussianViewer({
 	},
 	onFrameChange: (_frame, _total) => {
 		// Could add a progress indicator here
-	},
+	}
+
 	// Canvas stays fixed size - splat renders with empty space around it as needed
 });
 
 console.log("[main] GaussianViewer initialized");
 
+let currentBatchId: string | null = null;
+
+// WebSocket for progress updates
+const clientId = crypto.randomUUID();
+const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+const wsUrl = `${protocol}//${window.location.host}/ws/${clientId}`;
+console.log("[main] Connecting to WebSocket:", wsUrl);
+
+const ws = new WebSocket(wsUrl);
+
+ws.onopen = () => {
+	console.log("[main] WebSocket connected");
+};
+
+ws.onmessage = (event) => {
+	console.log("[main] WebSocket message:", event.data);
+	showLoading(event.data);
+};
+
+ws.onerror = (error) => {
+	console.error("[main] WebSocket error:", error);
+};
+
 // UI State Management
-function showLoading(): void {
+function showLoading(message = "Loading splat..."): void {
+	if (loadingTextElement) loadingTextElement.textContent = message;
 	loadingElement?.classList.add("visible");
 }
 
@@ -97,66 +129,234 @@ function hideLoading(): void {
 }
 
 function setParameterControlsDisabled(disabled: boolean): void {
-	advancedToggleElement.disabled = disabled;
-	maxDisparityInputElement.disabled = disabled;
-	maxZoomInputElement.disabled = disabled;
-	distanceInputElement.disabled = disabled;
-	numStepsInputElement.disabled = disabled;
-	numRepeatsInputElement.disabled = disabled;
-	resetParamsButtonElement.disabled = disabled;
+	if (advancedToggleElement) advancedToggleElement.disabled = disabled;
+	if (maxDisparityInputElement) maxDisparityInputElement.disabled = disabled;
+	if (maxZoomInputElement) maxZoomInputElement.disabled = disabled;
+	if (distanceInputElement) distanceInputElement.disabled = disabled;
+	if (numStepsInputElement) numStepsInputElement.disabled = disabled;
+	if (numRepeatsInputElement) numRepeatsInputElement.disabled = disabled;
+	if (resetParamsButtonElement) resetParamsButtonElement.disabled = disabled;
 }
 
 function enableControls(): void {
-	trajectorySelectElement.disabled = false;
-	playButtonElement.disabled = false;
-	pauseButtonElement.disabled = false;
-	resetButtonElement.disabled = false;
+	if (trajectorySelectElement) trajectorySelectElement.disabled = false;
+	if (playButtonElement) playButtonElement.disabled = false;
+	if (pauseButtonElement) pauseButtonElement.disabled = false;
+	if (resetButtonElement) resetButtonElement.disabled = false;
 	setParameterControlsDisabled(false);
 }
 
 function disableControls(): void {
-	trajectorySelectElement.disabled = true;
-	playButtonElement.disabled = true;
-	pauseButtonElement.disabled = true;
-	resetButtonElement.disabled = true;
+	if (trajectorySelectElement) trajectorySelectElement.disabled = true;
+	if (playButtonElement) playButtonElement.disabled = true;
+	if (pauseButtonElement) pauseButtonElement.disabled = true;
+	if (resetButtonElement) resetButtonElement.disabled = true;
 	setParameterControlsDisabled(true);
 }
 
 function updateButtonStates(state: "stopped" | "playing" | "paused"): void {
-	playButtonElement.disabled = state === "playing";
-	pauseButtonElement.disabled = state !== "playing";
+	if (playButtonElement) playButtonElement.disabled = state === "playing";
+	if (pauseButtonElement) pauseButtonElement.disabled = state !== "playing";
 	// Disable parameter controls during playback
 	setParameterControlsDisabled(state === "playing");
 }
 
 // File Loading
-async function loadFile(file: File): Promise<void> {
-	console.log("[main] loadFile called with:", file.name, file.size, "bytes");
+async function loadFiles(files: File[]): Promise<void> {
+	console.log("[main] loadFiles called with", files.length, "files");
 
-	if (!file.name.toLowerCase().endsWith(".ply")) {
-		alert("Please select a PLY file");
+	// Reset batch ID and hide download button when loading new files
+	currentBatchId = null;
+	if (downloadPlyButtonElement) downloadPlyButtonElement.style.display = "none";
+
+	if (files.length === 0) return;
+
+	// Validate files
+	const validFiles: File[] = [];
+	for (const file of files) {
+		const isPly = file.name.toLowerCase().endsWith(".ply");
+		const isPng = file.name.toLowerCase().endsWith(".png");
+		const isVideo = file.name.toLowerCase().match(/\.(mp4|mov|avi)$/);
+		if (isPly || isPng || isVideo) {
+			validFiles.push(file);
+		}
+	}
+
+	// Sort files alphabetically to ensure consistent order
+	validFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+	if (validFiles.length === 0) {
+		alert("Please select PLY, PNG, or video files");
 		return;
 	}
 
-	showLoading();
-	disableControls();
+	// Check for video file
+	const videoFile = validFiles.find((f) =>
+		f.name.toLowerCase().match(/\.(mp4|mov|avi)$/),
+	);
+
+	if (videoFile) {
+		if (validFiles.length > 1) {
+			alert("Please upload only one video file at a time.");
+			return;
+		}
+
+		console.log("[main] Video file detected:", videoFile.name);
+		showLoading("Processing video...");
+		disableControls(); // Disable controls during video processing
+
+		const formData = new FormData();
+		formData.append("file", videoFile);
+		formData.append("client_id", clientId);
+
+		try {
+			const response = await fetch("/upload_video", {
+				method: "POST",
+				body: formData,
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(
+					`Upload failed: ${response.status} ${response.statusText} - ${errorText}`,
+				);
+			}
+
+			const result = await response.json();
+			if (result.error) {
+				throw new Error(result.error);
+			}
+
+			if (result.ply_urls && result.ply_urls.length > 0) {
+				console.log("[main] Video processed, loading PLYs:", result.ply_urls);
+				await viewer.loadPlyUrls(result.ply_urls);
+
+				if (result.batch_id) {
+					currentBatchId = result.batch_id;
+					if (downloadPlyButtonElement) downloadPlyButtonElement.style.display = "block";
+				}
+			} else {
+				throw new Error("No PLY files were generated from the video.");
+			}
+		} catch (error) {
+			console.error("[main] Video upload error:", error);
+			alert(
+				`Video processing failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			hideLoading();
+			enableControls(); // Re-enable controls on error
+		}
+		return;
+	}
+
+	// If not a video and more than 500 files, alert
+	if (validFiles.length > 500) {
+		alert("Please select up to 500 files");
+		return;
+	}
+
+	// Handle PLY/PNG files (existing logic)
+	console.log("[main] Processing", validFiles.length, "files");
+
+	// Determine initial loading message
+	const pngCount = validFiles.filter(f => f.name.toLowerCase().endsWith(".png")).length;
+	if (pngCount > 0) {
+		if (pngCount === 1 && validFiles.length === 1) {
+			showLoading("Converting to PLY...");
+		} else {
+			showLoading(`Converting to PLYs (0/${pngCount})`);
+		}
+	} else {
+		showLoading("Loading splat...");
+	}
+
+	disableControls(); // Disable controls during file processing
 
 	try {
-		console.log("[main] Calling viewer.loadPly...");
-		await viewer.loadPly(file);
-		console.log("[main] viewer.loadPly completed");
+		// Process files: upload PNGs to convert, keep PLYs as is
+		const processedFiles: File[] = [];
+
+		let convertedCount = 0;
+		const totalPngs = validFiles.filter(f => f.name.toLowerCase().endsWith(".png")).length;
+
+		for (const file of validFiles) {
+			if (file.name.toLowerCase().endsWith(".png")) {
+				convertedCount++;
+				if (totalPngs > 1) {
+					showLoading(`Converting to PLYs (${convertedCount}/${totalPngs})`);
+				}
+				console.log("[main] Converting PNG to PLY:", file.name);
+				const formData = new FormData();
+				formData.append("file", file);
+
+				const response = await fetch("/predict", {
+					method: "POST",
+					body: formData,
+				});
+
+				if (!response.ok) {
+					throw new Error(`Conversion failed for ${file.name}`);
+				}
+
+				const result = await response.json();
+				if (result.error) {
+					throw new Error(result.error);
+				}
+
+				// Fetch the converted PLY file
+				const plyResponse = await fetch(result.ply_url);
+				const plyBlob = await plyResponse.blob();
+				const plyFile = new File([plyBlob], file.name.replace(".png", ".ply"), {
+					type: "application/octet-stream",
+				});
+				processedFiles.push(plyFile);
+
+				// For single PNG, we also want to allow download if possible
+				// But currently /predict only returns one file at a time and we don't have a batch context for multiple PNGs easily
+				// unless we change how we handle multiple PNGs.
+				// However, the backend /predict now returns batch_id.
+				if (result.batch_id) {
+					currentBatchId = result.batch_id;
+				}
+			} else {
+				processedFiles.push(file);
+			}
+		}
+
+		console.log(
+			"[main] Loading",
+			processedFiles.length,
+			"PLY files into viewer",
+		);
+		showLoading("Loading splat...");
+		await viewer.loadPlySequence(processedFiles);
+
+		// If we have a batch ID (from the last PNG processed), show download button
+		// Note: If multiple PNGs were uploaded, this only points to the last one's batch.
+		// Ideally we'd group them, but for now this enables it for at least single PNGs or the last one.
+		if (currentBatchId && downloadPlyButtonElement) {
+			downloadPlyButtonElement.style.display = "block";
+		}
 	} catch (error) {
-		console.error("[main] loadFile error:", error);
-		// Error already handled in viewer's onError callback
+		console.error("[main] Error loading files:", error);
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		alert(`Failed to load files: ${errorMessage}`);
+		hideLoading();
+		enableControls(); // Re-enable controls on error
 	}
 }
 
 // Sample File Loading
-async function loadSampleFile(): Promise<void> {
+// Sample File Loading
+async function loadSampleImage(): Promise<void> {
 	const sampleFileUrl = `${import.meta.env.BASE_URL}samples/sample.ply`;
-	console.log("[main] Loading sample file from:", sampleFileUrl);
+	console.log("[main] Loading sample image from:", sampleFileUrl);
 
-	showLoading();
+	// Hide download button for samples
+	currentBatchId = null;
+	if (downloadPlyButtonElement) downloadPlyButtonElement.style.display = "none";
+
+	showLoading("Loading splat...");
 	disableControls();
 
 	try {
@@ -168,7 +368,7 @@ async function loadSampleFile(): Promise<void> {
 		const file = new File([blob], "sample.ply", {
 			type: "application/octet-stream",
 		});
-		await viewer.loadPly(file);
+		await viewer.loadPlySequence([file]);
 	} catch (error) {
 		hideLoading();
 		console.error("[main] Failed to load sample file:", error);
@@ -177,12 +377,55 @@ async function loadSampleFile(): Promise<void> {
 	}
 }
 
+async function loadSampleVideo(): Promise<void> {
+	console.log("[main] Loading video sample...");
+
+	// Hide download button for samples
+	currentBatchId = null;
+	if (downloadPlyButtonElement) downloadPlyButtonElement.style.display = "none";
+
+	showLoading("Loading splat...");
+	disableControls();
+
+	try {
+		const files: File[] = [];
+		// Load frames 01 to 96
+		for (let i = 1; i <= 96; i++) {
+			const filename = `${String(i).padStart(2, "0")}.ply`;
+			const url = `${import.meta.env.BASE_URL}samples/videoSample/${filename}`;
+
+			// Sequential fetch is safer for order and network
+			const response = await fetch(url);
+			if (!response.ok) {
+				console.warn(`Failed to fetch sample frame ${filename}: ${response.status}`);
+				continue;
+			}
+			const blob = await response.blob();
+			const file = new File([blob], filename, {
+				type: "application/octet-stream",
+			});
+			files.push(file);
+		}
+
+		if (files.length === 0) {
+			throw new Error("No sample files loaded");
+		}
+
+		console.log(`[main] Loaded ${files.length} sample frames`);
+		await viewer.loadPlySequence(files);
+	} catch (error) {
+		hideLoading();
+		console.error("[main] Failed to load sample files:", error);
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		alert(`Failed to load sample files: ${errorMessage}`);
+	}
+}
+
 // Event Listeners
 fileInputElement?.addEventListener("change", (event) => {
 	const target = event.target as HTMLInputElement;
-	const file = target.files?.[0];
-	if (file) {
-		loadFile(file);
+	if (target.files && target.files.length > 0) {
+		loadFiles(Array.from(target.files));
 	}
 });
 
@@ -204,16 +447,63 @@ fileLoaderElement?.addEventListener("drop", (event) => {
 	event.preventDefault();
 	fileLoaderElement.classList.remove("drag-over");
 
-	const file = event.dataTransfer?.files[0];
-	if (file) {
-		loadFile(file);
+	if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
+		loadFiles(Array.from(event.dataTransfer.files));
 	}
 });
 
-// Load sample button
-loadSampleButtonElement?.addEventListener("click", () => {
-	loadSampleFile();
-});
+// Load sample buttons
+if (loadSampleButtonElement) {
+	loadSampleButtonElement.addEventListener("click", () => {
+		loadSampleImage();
+	});
+}
+
+if (loadSampleVideoButtonElement) {
+	loadSampleVideoButtonElement.addEventListener("click", () => {
+		loadSampleVideo();
+	});
+}
+
+if (downloadPlyButtonElement) {
+	downloadPlyButtonElement.addEventListener("click", async () => {
+		if (currentBatchId) {
+			// Set loading state
+			const originalText = downloadPlyButtonElement.textContent;
+			downloadPlyButtonElement.textContent = "Downloading";
+			downloadPlyButtonElement.disabled = true;
+			downloadPlyButtonElement.classList.add("downloading");
+
+			// Animate dots
+			let dots = 0;
+			const interval = setInterval(() => {
+				dots = (dots + 1) % 4;
+				downloadPlyButtonElement.textContent = `Downloading${".".repeat(dots)}`;
+			}, 500);
+
+			try {
+				// Trigger download
+				window.location.href = `/download_zip/${currentBatchId}`;
+
+				// Reset after a delay (since we can't easily track download completion of a direct link)
+				// A 3-second delay is usually enough to acknowledge the action
+				setTimeout(() => {
+					clearInterval(interval);
+					if (downloadPlyButtonElement) {
+						downloadPlyButtonElement.textContent = "Download";
+						downloadPlyButtonElement.disabled = false;
+						downloadPlyButtonElement.classList.remove("downloading");
+					}
+				}, 3000);
+			} catch (e) {
+				clearInterval(interval);
+				downloadPlyButtonElement.textContent = "Download PLY(s)";
+				downloadPlyButtonElement.disabled = false;
+				downloadPlyButtonElement.classList.remove("downloading");
+			}
+		}
+	});
+}
 
 // Trajectory controls
 trajectorySelectElement?.addEventListener("change", () => {
@@ -329,7 +619,7 @@ if (fileUrl) {
 			const file = new File([blob], "scene.ply", {
 				type: "application/octet-stream",
 			});
-			return loadFile(file);
+			return loadFiles([file]);
 		})
 		.catch((error) => {
 			hideLoading();

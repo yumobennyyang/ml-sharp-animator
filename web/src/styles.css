@@ -383,6 +383,12 @@ button:disabled {
   background: rgba(0, 0, 0, 0.08);
 }
 
+/* Downloading State */
+button.downloading {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 /* Small Button Variant */
 .btn-sm {
   padding: var(--space-1) var(--space-3);
@@ -475,23 +481,17 @@ select:disabled {
 }
 
 /* --------------------------------------------------------------------------
-   ADVANCED SETTINGS (Accordion)
+   ADVANCED SETTINGS
    -------------------------------------------------------------------------- */
 
 #advanced-settings-container {
-  width: 100%;
+  position: relative;
 }
 
 #advanced-toggle {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  width: 100%;
-  justify-content: space-between;
-  padding: var(--space-2) var(--space-3);
-  background: var(--glass-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
 }
 
 #advanced-toggle .chevron {
@@ -504,38 +504,26 @@ select:disabled {
   transform: rotate(180deg);
 }
 
-#advanced-toggle.expanded {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-  border-bottom-color: transparent;
-}
-
 #advanced-panel {
-  display: grid;
-  grid-template-rows: 1fr;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-top: none;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-  overflow: hidden;
-  transition: grid-template-rows var(--duration-normal) var(--ease-out),
-              padding var(--duration-normal) var(--ease-out);
-}
-
-#advanced-panel.collapsed {
-  grid-template-rows: 0fr;
-  padding-top: 0;
-  padding-bottom: 0;
-}
-
-#advanced-panel > .accordion-inner {
-  overflow: hidden;
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 100;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  padding: var(--space-4);
+  min-width: 340px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow-lg);
+}
+
+#advanced-panel.collapsed {
+  display: none;
 }
 
 /* Parameter Rows */
@@ -638,7 +626,7 @@ input[type="number"]:disabled {
   display: flex;
 }
 
-.spinner {
+.spinner{
   width: 32px;
   height: 32px;
   border: 2px solid var(--gray-200);
@@ -676,6 +664,10 @@ input[type="number"]:disabled {
 
 @supports not (backdrop-filter: blur(12px)) {
   #sidebar {
+    background: rgba(255, 255, 255, 0.95);
+  }
+
+  #advanced-panel {
     background: rgba(255, 255, 255, 0.95);
   }
 }

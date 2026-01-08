@@ -1,10 +1,7 @@
 import { SplatMesh } from "@sparkjsdev/spark";
 import { PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import {
-	computeDepthQuantiles,
-	computeMaxOffset,
-} from "../trajectory/CameraMatrixUtils";
+import { computeMaxOffset } from "../trajectory/CameraMatrixUtils";
 import { TrajectoryPlayer } from "../trajectory/TrajectoryPlayer";
 import { createEyeTrajectory } from "../trajectory/trajectories";
 import {
@@ -14,7 +11,6 @@ import {
 } from "../trajectory/types";
 import {
 	estimateFocalLength,
-	extractPlyPositions,
 	type PlyMetadata,
 	parsePlyMetadata,
 } from "../utils/plyMetadata";
@@ -35,13 +31,21 @@ export class GaussianViewer {
 	private camera: PerspectiveCamera;
 	private renderer: WebGLRenderer;
 	private controls: OrbitControls;
-	private splatMesh: SplatMesh | null = null;
+	private splatMeshes: SplatMesh[] = [];
 	private trajectoryPlayer: TrajectoryPlayer;
 	private trajectoryParams: TrajectoryParams;
 	private metadata: PlyMetadata | null = null;
-	private positions: Float32Array | null = null; // Vertex positions for depth quantile computation
 	private isDisposed = false;
 	private animationFrameId: number | null = null;
+
+	// Animation state
+	private currentFrame = 0;
+	private lastFrameTime = 0;
+	private frameRate = 12; // FPS
+
+	// FPS Calculation
+	private lastFpsTime = 0;
+	private frameCount = 0;
 
 	// Camera model state (matching Python's PinholeCameraModel)
 	private lookAtTarget = new Vector3(0, 0, 0);
@@ -134,9 +138,43 @@ export class GaussianViewer {
 
 		this.animationFrameId = requestAnimationFrame(this.animate);
 
+		const now = performance.now();
+
+		// FPS Reporting (Loop Rate)
+		if (now - this.lastFpsTime >= 1000) {
+			// const fps = Math.round(
+			// 	(this.frameCount * 1000) / (now - this.lastFpsTime),
+			// );
+			// this.options.onFpsUpdate?.(fps);
+			this.frameCount = 0;
+			this.lastFpsTime = now;
+		}
+
+		// Update mesh animation if multiple meshes
+		if (this.splatMeshes.length > 1) {
+			const interval = 1000 / this.frameRate;
+			if (now - this.lastFrameTime > interval) {
+				// Hide current
+				const currentMesh = this.splatMeshes[this.currentFrame];
+				if (currentMesh) currentMesh.visible = false;
+
+				// Advance frame
+				this.currentFrame = (this.currentFrame + 1) % this.splatMeshes.length;
+
+				// Show next
+				const nextMesh = this.splatMeshes[this.currentFrame];
+				if (nextMesh) nextMesh.visible = true;
+
+				this.lastFrameTime = now;
+
+				// Count this as a loop frame
+				this.frameCount++;
+			}
+		}
+
 		// Update trajectory if playing
 		if (this.trajectoryPlayer.isPlaying()) {
-			const eyePosition = this.trajectoryPlayer.update(performance.now());
+			const eyePosition = this.trajectoryPlayer.update(now);
 			if (eyePosition) {
 				// Apply camera position from trajectory
 				// The trajectory gives us eye positions in OpenCV convention
@@ -172,61 +210,163 @@ export class GaussianViewer {
 	}
 
 	async loadPly(file: File): Promise<void> {
-		console.log("[GaussianViewer] loadPly called with:", file.name);
+		return this.loadPlySequence([file]);
+	}
+
+	async loadPlySequence(files: File[]): Promise<void> {
+		console.log(
+			"[GaussianViewer] loadPlySequence called with",
+			files.length,
+			"files",
+		);
+
+		if (files.length === 0) return;
+
 		try {
-			// Remove existing splat mesh
-			if (this.splatMesh) {
-				console.log("[GaussianViewer] Removing existing splat mesh");
-				this.scene.remove(this.splatMesh);
-				this.splatMesh.dispose();
-				this.splatMesh = null;
+			// Check if we should preserve the camera view
+			const preserveView = this.splatMeshes.length > 0;
+
+			// Remove existing splat meshes
+			if (this.splatMeshes.length > 0) {
+				console.log("[GaussianViewer] Removing existing splat meshes");
+				for (const mesh of this.splatMeshes) {
+					this.scene.remove(mesh);
+					mesh.dispose();
+				}
+				this.splatMeshes = [];
 			}
 
-			// Read file and parse metadata
-			console.log("[GaussianViewer] Reading file buffer...");
-			const buffer = await file.arrayBuffer();
-			console.log("[GaussianViewer] Buffer size:", buffer.byteLength);
-			this.metadata = parsePlyMetadata(buffer);
-			console.log("[GaussianViewer] Metadata parsed:", this.metadata);
+			// Load all files
+			for (let i = 0; i < files.length; i++) {
+				const file = files[i];
+				if (!file) continue;
+				console.log(
+					`[GaussianViewer] Loading file ${i + 1}/${files.length}: ${file.name}`,
+				);
 
-			// Extract vertex positions for depth quantile computation (matching Python)
-			this.positions = extractPlyPositions(buffer);
-			console.log(
-				"[GaussianViewer] Positions extracted:",
-				this.positions.length / 3,
-				"vertices",
-			);
+				const buffer = await file.arrayBuffer();
 
-			// Create blob URL for Spark
-			const blob = new Blob([buffer], { type: "application/octet-stream" });
-			const url = URL.createObjectURL(blob);
-			console.log("[GaussianViewer] Blob URL created:", url);
+				// Parse metadata from the first file only (assuming all are same scene/camera)
+				if (i === 0) {
+					this.metadata = parsePlyMetadata(buffer);
+					console.log(
+						"[GaussianViewer] Metadata parsed from first file:",
+						this.metadata,
+					);
+				}
 
-			// Load with Spark
-			console.log("[GaussianViewer] Creating SplatMesh...");
-			this.splatMesh = new SplatMesh({ url });
-			this.scene.add(this.splatMesh);
-			console.log("[GaussianViewer] SplatMesh added to scene");
+				const blob = new Blob([buffer], { type: "application/octet-stream" });
+				const url = URL.createObjectURL(blob);
 
-			// Wait for load to complete
-			console.log("[GaussianViewer] Waiting for SplatMesh to initialize...");
-			await this.splatMesh.initialized;
-			console.log("[GaussianViewer] SplatMesh initialized");
+				const splatMesh = new SplatMesh({ url });
+				// Hide all except the first one initially
+				splatMesh.visible = i === 0;
 
-			URL.revokeObjectURL(url);
+				this.scene.add(splatMesh);
+				this.splatMeshes.push(splatMesh);
 
-			// Compute depth quantiles and set up camera (matching Python)
-			console.log("[GaussianViewer] Setting up camera for scene...");
-			this.setupCameraForScene();
+				// Wait for initialization
+				await splatMesh.initialized;
+				URL.revokeObjectURL(url);
+			}
 
-			// Generate initial trajectory
-			console.log("[GaussianViewer] Generating trajectory...");
-			this.generateTrajectory();
+			console.log("[GaussianViewer] All meshes loaded");
+
+			this.currentFrame = 0;
+			this.lastFrameTime = performance.now();
+
+			// Compute depth quantiles and set up camera (using first mesh)
+			if (this.splatMeshes.length > 0) {
+				console.log("[GaussianViewer] Setting up camera for scene...");
+				this.setupCameraForScene(!preserveView);
+
+				// Generate initial trajectory
+				console.log("[GaussianViewer] Generating trajectory...");
+				this.generateTrajectory();
+			}
 
 			console.log("[GaussianViewer] Load complete, calling onLoad");
 			this.options.onLoad?.();
 		} catch (error) {
-			console.error("[GaussianViewer] loadPly error:", error);
+			console.error("[GaussianViewer] loadPlySequence error:", error);
+			const err = error instanceof Error ? error : new Error(String(error));
+			this.options.onError?.(err);
+			throw err;
+		}
+	}
+
+	async loadPlyUrls(urls: string[]): Promise<void> {
+		console.log(
+			"[GaussianViewer] loadPlyUrls called with",
+			urls.length,
+			"URLs",
+		);
+
+		if (urls.length === 0) return;
+
+		try {
+			// Check if we should preserve the camera view
+			const preserveView = this.splatMeshes.length > 0;
+
+			// Remove existing splat meshes
+			if (this.splatMeshes.length > 0) {
+				console.log("[GaussianViewer] Removing existing splat meshes");
+				for (const mesh of this.splatMeshes) {
+					this.scene.remove(mesh);
+					mesh.dispose();
+				}
+				this.splatMeshes = [];
+			}
+
+			// Load all URLs
+			for (let i = 0; i < urls.length; i++) {
+				const url = urls[i];
+				if (!url) continue;
+				console.log(
+					`[GaussianViewer] Loading URL ${i + 1}/${urls.length}: ${url}`,
+				);
+
+				// Fetch buffer for metadata parsing (first file only)
+				if (i === 0) {
+					const response = await fetch(url);
+					const buffer = await response.arrayBuffer();
+					this.metadata = parsePlyMetadata(buffer);
+					console.log(
+						"[GaussianViewer] Metadata parsed from first file:",
+						this.metadata,
+					);
+				}
+
+				const splatMesh = new SplatMesh({ url });
+				// Hide all except the first one initially
+				splatMesh.visible = i === 0;
+
+				this.scene.add(splatMesh);
+				this.splatMeshes.push(splatMesh);
+
+				// Wait for initialization
+				await splatMesh.initialized;
+			}
+
+			console.log("[GaussianViewer] All meshes loaded");
+
+			this.currentFrame = 0;
+			this.lastFrameTime = performance.now();
+
+			// Compute depth quantiles and set up camera (using first mesh)
+			if (this.splatMeshes.length > 0) {
+				console.log("[GaussianViewer] Setting up camera for scene...");
+				this.setupCameraForScene(!preserveView);
+
+				// Generate initial trajectory
+				console.log("[GaussianViewer] Generating trajectory...");
+				this.generateTrajectory();
+			}
+
+			console.log("[GaussianViewer] Load complete, calling onLoad");
+			this.options.onLoad?.();
+		} catch (error) {
+			console.error("[GaussianViewer] loadPlyUrls error:", error);
 			const err = error instanceof Error ? error : new Error(String(error));
 			this.options.onError?.(err);
 			throw err;
@@ -241,34 +381,27 @@ export class GaussianViewer {
 	 * - depth_focus = max(2.0, 10th percentile of scene depths)
 	 * - FOV computed from focal length and image height
 	 */
-	private setupCameraForScene(): void {
-		if (!this.splatMesh) return;
+	private setupCameraForScene(resetView = true): void {
+		if (this.splatMeshes.length === 0) return;
 
-		// Compute depth quantiles from actual positions (matching Python's _compute_depth_quantiles)
-		// Python uses: q_near=0.001 (0.1 percentile), q_focus=0.1 (10th percentile), q_far=0.999
-		if (this.positions && this.positions.length > 0) {
-			const depthQuantiles = computeDepthQuantiles(this.positions);
-			this.minDepth = Math.max(0.1, depthQuantiles.min);
-			// Python uses min_depth_focus=2.0 as floor for focus depth
-			this.depthFocus = Math.max(2.0, depthQuantiles.focus);
+		// Use the first mesh for bounding box and camera setup
+		const mesh = this.splatMeshes[0];
+		if (!mesh) return;
 
-			console.log(
-				"[GaussianViewer] Depth quantiles from positions:",
-				depthQuantiles,
-			);
-		} else {
-			// Fallback to bounding box if positions not available
-			const box = this.splatMesh.getBoundingBox(true);
-			console.log(
-				"[GaussianViewer] Fallback to bounding box:",
-				box.min,
-				box.max,
-			);
-			const minZ = box.min.z;
-			const maxZ = box.max.z;
-			this.minDepth = Math.max(0.1, minZ);
-			this.depthFocus = Math.max(2.0, minZ + 0.1 * (maxZ - minZ));
-		}
+		// Get bounding box using Spark's method
+		const box = mesh.getBoundingBox(true);
+
+		console.log("[GaussianViewer] Bounding box min:", box.min);
+		console.log("[GaussianViewer] Bounding box max:", box.max);
+
+		// Compute depth quantiles (matching Python's _compute_depth_quantiles)
+		// In Python: depth_quantiles.focus = 10th percentile of scene Z values
+		// Approximate from bounding box: focus ≈ min + 0.1 * (max - min)
+		const minZ = box.min.z;
+		const maxZ = box.max.z;
+		this.minDepth = Math.max(0.1, minZ);
+		// Python uses min_depth_focus=2.0 as floor
+		this.depthFocus = Math.max(2.0, minZ + 0.1 * (maxZ - minZ));
 
 		console.log("[GaussianViewer] Min depth:", this.minDepth);
 		console.log("[GaussianViewer] Depth focus:", this.depthFocus);
@@ -304,16 +437,19 @@ export class GaussianViewer {
 			this.options.onAspectRatioChange?.(imageWidth, imageHeight);
 		}
 
-		// Camera starts at origin, looks at depth_focus along Z axis
-		// This matches Python's eye_pos=[0,0,0] looking at [0,0,depth_focus]
-		this.camera.position.set(0, 0, 0);
-		this.lookAtTarget.set(0, 0, this.depthFocus);
-		this.controls.target.set(0, 0, this.depthFocus);
-		this.camera.lookAt(this.lookAtTarget);
-		this.controls.update();
+		if (resetView) {
+			// Camera starts at origin, looks at depth_focus along Z axis
+			// This matches Python's eye_pos=[0,0,0] looking at [0,0,depth_focus]
+			this.camera.position.set(0, 0, 0);
+			this.lookAtTarget.set(0, 0, this.depthFocus);
+			this.controls.target.set(0, 0, this.depthFocus);
+			this.camera.lookAt(this.lookAtTarget);
+			this.controls.update();
+			console.log("[GaussianViewer] Camera position reset");
+		} else {
+			console.log("[GaussianViewer] Camera position preserved");
+		}
 
-		console.log("[GaussianViewer] Camera position:", this.camera.position);
-		console.log("[GaussianViewer] Look-at target:", this.lookAtTarget);
 		console.log("[GaussianViewer] Camera setup complete");
 	}
 
@@ -361,14 +497,14 @@ export class GaussianViewer {
 		value: TrajectoryParams[K],
 	): void {
 		this.trajectoryParams[key] = value;
-		if (this.splatMesh) {
+		if (this.splatMeshes.length > 0) {
 			this.generateTrajectory();
 		}
 	}
 
 	resetTrajectoryParams(): void {
 		this.trajectoryParams = { ...DEFAULT_TRAJECTORY_PARAMS };
-		if (this.splatMesh) {
+		if (this.splatMeshes.length > 0) {
 			this.generateTrajectory();
 		}
 	}
@@ -378,7 +514,7 @@ export class GaussianViewer {
 	}
 
 	play(): void {
-		if (!this.splatMesh) return;
+		if (this.splatMeshes.length === 0) return;
 		this.controls.enabled = false;
 		this.trajectoryPlayer.play();
 	}
@@ -408,7 +544,7 @@ export class GaussianViewer {
 	}
 
 	isLoaded(): boolean {
-		return this.splatMesh !== null;
+		return this.splatMeshes.length > 0;
 	}
 
 	/** Manually trigger resize to sync camera/renderer with container size */
@@ -425,10 +561,11 @@ export class GaussianViewer {
 
 		window.removeEventListener("resize", this.handleResize);
 
-		if (this.splatMesh) {
-			this.scene.remove(this.splatMesh);
-			this.splatMesh.dispose();
+		for (const mesh of this.splatMeshes) {
+			this.scene.remove(mesh);
+			mesh.dispose();
 		}
+		this.splatMeshes = [];
 
 		this.controls.dispose();
 		this.renderer.dispose();

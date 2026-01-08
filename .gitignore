@@ -168,3 +168,6 @@ cython_debug/
 images/
 gaussians/
 renderings/
+server/temp_data/
+web/dist/
+web/node_modules/

@@ -1,3 +1,98 @@
+# ml-sharp-animator
+
+> **This is a fork of [kstonekuan's ml-sharp-web-viewer](https://github.com/kstonekuan/ml-sharp-web-viewer) repository.**
+>
+> This version allows you to upload images and videos to be visualized and animated.
+
+## Features
+
+- **Video to 4D**: Upload a video, and the backend will extract frames, convert them to 3D Gaussian Splats, and play them back as a 4D free-viewpoint video.
+- **Image to 3D**: Upload a single PNG to convert it to a static 3D Splat.
+- **Download**: Download the generated `.ply` files as a ZIP archive.
+
+## Prerequisites
+
+Before running this project, ensure you have the following installed:
+
+1.  **Anaconda or Miniconda**: Required for managing the Python environment. [Install Miniconda](https://docs.conda.io/en/latest/miniconda.html).
+2.  **FFmpeg**: Required for video processing.
+    - **macOS**: `brew install ffmpeg`
+    - **Linux**: `sudo apt install ffmpeg`
+    - **Windows**: [Download FFmpeg](https://ffmpeg.org/download.html) and add it to your PATH.
+3.  **Node.js & npm**: Required for building the frontend. [Install Node.js](https://nodejs.org/).
+
+## Installation
+
+1.  **Clone the repository**:
+
+    ```bash
+    git clone https://github.com/yumobennyyang/ml-sharp-animator.git
+    cd ml-sharp-animator
+    ```
+
+2.  **Set up the Python Environment**:
+
+    ```bash
+    # Create the conda environment
+    conda create -n sharp python=3.13
+
+    # Activate the environment
+    conda activate sharp
+
+    # Install dependencies
+    pip install -r requirements.txt
+    ```
+
+3.  **Build the Frontend**:
+    ```bash
+    cd web
+    npm install
+    npm run build
+    cd ..
+    ```
+
+## Running the App
+
+### Using the Helper Script (macOS/Linux)
+
+This is the helper script to easily start the server:
+
+```bash
+./run_server.sh
+```
+
+### Manual Start
+
+If you prefer to run it manually:
+
+1.  **Activate the environment**:
+
+    ```bash
+    conda activate sharp
+    ```
+
+2.  **Start the server**:
+
+    ```bash
+    uvicorn server.main:app --reload
+    ```
+
+3.  **Open your browser**:
+    Navigate to [http://localhost:8000](http://localhost:8000)
+
+## Usage
+
+1.  **Upload a Video**: Drag and drop a video file (`.mp4`, `.mov`, `.avi`) to process and display it as a 3D animation.
+2.  **Upload an Image**: Drag and drop a single `.png` file to convert and display it as a static 3D Splat.
+3.  **Upload a PLY**: Drag and drop a `.ply` file to view an existing 3D Splat.
+4.  **Upload Multiple Images**: Drag and drop up to 500 `.png` files to convert and play them as a looped animation at 12 FPS.
+5.  **Upload Multiple PLYs**: Drag and drop up to 500 `.ply` files to play them as a looped animation at 12 FPS.
+6.  **Download Assets**: Click the "Download PLY(s)" button after processing to save your generated 3D assets as a ZIP file. If the button does not respond, you can manually retrieve the files from the `server/temp_data` directory.
+
+---
+
+## Original README from [kstonekuan/ml-sharp-web-viewer](https://github.com/kstonekuan/ml-sharp-web-viewer)
+
 # ml-sharp-web-viewer
 
 > **This is a fork of [Apple's ml-sharp](https://github.com/apple/ml-sharp) repository.**
@@ -51,7 +146,6 @@ uv run sharp cloud predict -i photo.jpg -o output/ --gpu h100  # $3.95/hr (faste
 | A10  | $1.10    | Default, balanced |
 | A100 | $2.50    | High performance  |
 | H100 | $3.95    | Fastest           |
-
 
 ---
 
