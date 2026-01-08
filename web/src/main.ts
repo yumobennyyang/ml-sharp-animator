@@ -389,8 +389,8 @@ async function loadSampleVideo(): Promise<void> {
 
 	try {
 		const files: File[] = [];
-		// Load frames 01 to 96
-		for (let i = 1; i <= 96; i++) {
+		// Load frames 01 to 12
+		for (let i = 1; i <= 12; i++) {
 			const filename = `${String(i).padStart(2, "0")}.ply`;
 			const url = `${import.meta.env.BASE_URL}samples/videoSample/${filename}`;
 
