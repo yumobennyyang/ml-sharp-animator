@@ -201,6 +201,15 @@ async function loadFiles(files: File[]): Promise<void> {
 		return;
 	}
 
+	// Check if running locally before allowing server-side processing (Video/PNG)
+	const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+	const hasNonPlyFiles = validFiles.some(f => !f.name.toLowerCase().endsWith(".ply"));
+
+	if (!isLocal && hasNonPlyFiles) {
+		alert("Video and Image conversion requires the Python backend server.\n\nPlease run this application locally to use these features.\nSee instructions on GitHub: https://github.com/yumobennyyang/ml-sharp-animator");
+		return;
+	}
+
 	// Check for video file
 	const videoFile = validFiles.find((f) =>
 		f.name.toLowerCase().match(/\.(mp4|mov|avi)$/),
