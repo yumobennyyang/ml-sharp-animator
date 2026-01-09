@@ -55,6 +55,8 @@ export class GaussianViewer {
 
 	private options: ViewerOptions;
 
+	private resizeObserver: ResizeObserver;
+
 	constructor(options: ViewerOptions) {
 		console.log("[GaussianViewer] Constructor called");
 		this.options = options;
@@ -73,7 +75,9 @@ export class GaussianViewer {
 
 		// Initialize camera with OpenCV coordinate convention (Y-down, Z-forward)
 		// This matches SHARP PLY files which use OpenCV convention
-		const aspect = this.container.clientWidth / this.container.clientHeight;
+		const width = this.container.clientWidth || 1; // Prevent 0 division
+		const height = this.container.clientHeight || 1;
+		const aspect = width / height;
 		this.camera = new PerspectiveCamera(45, aspect, 0.01, 500);
 		this.camera.position.set(0, 0, -3);
 		this.camera.up.set(0, -1, 0); // OpenCV: Y-down
@@ -82,10 +86,7 @@ export class GaussianViewer {
 		// Initialize renderer with transparent background
 		this.renderer = new WebGLRenderer({ antialias: true, alpha: true });
 		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-		this.renderer.setSize(
-			this.container.clientWidth,
-			this.container.clientHeight,
-		);
+		this.renderer.setSize(width, height);
 		this.container.appendChild(this.renderer.domElement);
 		console.log("[GaussianViewer] Renderer created and attached");
 
@@ -114,8 +115,9 @@ export class GaussianViewer {
 		// Default trajectory params
 		this.trajectoryParams = { ...DEFAULT_TRAJECTORY_PARAMS };
 
-		// Handle resize
-		window.addEventListener("resize", this.handleResize);
+		// Handle resize with ResizeObserver
+		this.resizeObserver = new ResizeObserver(this.handleResize);
+		this.resizeObserver.observe(this.container);
 
 		// Start render loop
 		this.animate();
@@ -127,6 +129,10 @@ export class GaussianViewer {
 
 		const width = this.container.clientWidth;
 		const height = this.container.clientHeight;
+
+		if (width === 0 || height === 0) return;
+
+		console.log("[GaussianViewer] Resizing to:", width, "x", height);
 
 		this.camera.aspect = width / height;
 		this.camera.updateProjectionMatrix();
@@ -559,7 +565,9 @@ export class GaussianViewer {
 			cancelAnimationFrame(this.animationFrameId);
 		}
 
-		window.removeEventListener("resize", this.handleResize);
+		this.resizeObserver.disconnect();
+		// Window listener is no longer needed as ResizeObserver handles it
+		// window.removeEventListener("resize", this.handleResize);
 
 		for (const mesh of this.splatMeshes) {
 			this.scene.remove(mesh);
