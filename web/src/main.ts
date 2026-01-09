@@ -469,7 +469,6 @@ if (downloadPlyButtonElement) {
 	downloadPlyButtonElement.addEventListener("click", async () => {
 		if (currentBatchId) {
 			// Set loading state
-			const originalText = downloadPlyButtonElement.textContent;
 			downloadPlyButtonElement.textContent = "Downloading";
 			downloadPlyButtonElement.disabled = true;
 			downloadPlyButtonElement.classList.add("downloading");
