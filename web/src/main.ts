@@ -99,11 +99,32 @@ let currentBatchId: string | null = null;
 
 // WebSocket for progress updates
 const clientId = crypto.randomUUID();
-const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-const wsUrl = `${protocol}//${window.location.host}/ws/${clientId}`;
-console.log("[main] Connecting to WebSocket:", wsUrl);
+let ws: WebSocket | null = null;
 
-const ws = new WebSocket(wsUrl);
+// Only connect to WebSocket if running locally
+const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+if (isLocal) {
+	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+	const wsUrl = `${protocol}//${window.location.host}/ws/${clientId}`;
+	console.log("[main] Connecting to WebSocket:", wsUrl);
+	ws = new WebSocket(wsUrl);
+
+	ws.onopen = () => {
+		console.log("[main] WebSocket connected");
+	};
+
+	ws.onmessage = (event) => {
+		console.log("[main] WebSocket message:", event.data);
+		showLoading(event.data);
+	};
+
+	ws.onerror = (error) => {
+		console.error("[main] WebSocket error:", error);
+	};
+} else {
+	console.log("[main] Running in static mode (GitHub Pages), WebSocket disabled");
+}
 
 ws.onopen = () => {
 	console.log("[main] WebSocket connected");
