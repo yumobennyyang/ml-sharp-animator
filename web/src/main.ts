@@ -126,18 +126,7 @@ if (isLocal) {
 	console.log("[main] Running in static mode (GitHub Pages), WebSocket disabled");
 }
 
-ws.onopen = () => {
-	console.log("[main] WebSocket connected");
-};
 
-ws.onmessage = (event) => {
-	console.log("[main] WebSocket message:", event.data);
-	showLoading(event.data);
-};
-
-ws.onerror = (error) => {
-	console.error("[main] WebSocket error:", error);
-};
 
 // UI State Management
 function showLoading(message = "Loading splat..."): void {
