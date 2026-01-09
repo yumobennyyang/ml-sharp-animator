@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
-	base: "/ml-sharp-animator/",
+	base: "./",
 	server: {
 		port: 3000,
 	},
