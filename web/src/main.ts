@@ -3,6 +3,7 @@ import {
 	type TrajectoryType,
 } from "./trajectory/types";
 import { GaussianViewer } from "./viewer/GaussianViewer";
+import "./styles.css";
 
 console.log("[main] Script loaded");
 
